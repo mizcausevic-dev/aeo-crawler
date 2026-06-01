@@ -20,3 +20,9 @@ jobs:
       - run: go vet ./...
       - run: go test -race -v ./...
       - run: go build ./cmd/aeo-crawler
+
+# Least-privilege: read-only test/CI runs. GITHUB_TOKEN gets no write to
+# anything. The publish/release flows (where they exist) carry their own
+# scoped permissions per-workflow.
+permissions:
+  contents: read

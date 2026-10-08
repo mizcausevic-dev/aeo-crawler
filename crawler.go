@@ -26,6 +26,9 @@ type Config struct {
 	Concurrency int
 	// FetchTimeout is the per-request HTTP timeout.
 	FetchTimeout time.Duration
+	// GraphOutput keeps parsed declarations so callers can produce the
+	// explorer's enriched JSONL format. Summary runs do not retain them.
+	GraphOutput bool
 }
 
 // DefaultConfig returns a sensible default crawl configuration.
@@ -40,15 +43,62 @@ func DefaultConfig() Config {
 
 // Result is one entry in the crawl output.
 type Result struct {
-	Origin      string  `json:"origin"`
-	Depth       int     `json:"depth"`
-	Success     bool    `json:"success"`
-	EntityName  string  `json:"entity_name,omitempty"`
-	EntityType  string  `json:"entity_type,omitempty"`
-	ClaimsCount int     `json:"claims_count,omitempty"`
-	AuditMode   string  `json:"audit_mode,omitempty"`
-	Error       string  `json:"error,omitempty"`
-	FetchedAt   string  `json:"fetched_at"`
+	Origin      string `json:"origin"`
+	Depth       int    `json:"depth"`
+	Success     bool   `json:"success"`
+	EntityName  string `json:"entity_name,omitempty"`
+	EntityType  string `json:"entity_type,omitempty"`
+	ClaimsCount int    `json:"claims_count,omitempty"`
+	AuditMode   string `json:"audit_mode,omitempty"`
+	Error       string `json:"error,omitempty"`
+	FetchedAt   string `json:"fetched_at"`
+	document    *aeo.Document
+}
+
+// GraphNode is one successful crawl result in the explorer's enriched input
+// format. Body is the SDK's parsed declaration, not the original response bytes.
+type GraphNode struct {
+	ID         string          `json:"id"`
+	Entity     GraphEntity     `json:"entity"`
+	Body       *aeo.Document   `json:"body"`
+	Provenance CrawlProvenance `json:"provenance"`
+}
+
+// GraphEntity is the explorer's summary of a crawled AEO entity.
+type GraphEntity struct {
+	ID           string `json:"id"`
+	Kind         string `json:"kind"`
+	Name         string `json:"name"`
+	CanonicalURL string `json:"canonical_url"`
+}
+
+// CrawlProvenance records where and when the declaration was fetched.
+type CrawlProvenance struct {
+	Origin    string `json:"origin"`
+	Depth     int    `json:"depth"`
+	FetchedAt string `json:"fetched_at"`
+}
+
+// AsGraphNode returns an enriched row when this was a successful crawl with
+// GraphOutput enabled. Failed fetches are never graph nodes.
+func (r Result) AsGraphNode() (GraphNode, bool) {
+	if !r.Success || r.document == nil || r.document.Entity.ID == "" {
+		return GraphNode{}, false
+	}
+	doc := r.document
+	return GraphNode{
+		ID: doc.Entity.ID,
+		Entity: GraphEntity{
+			ID:           doc.Entity.ID,
+			Kind:         string(doc.Entity.Type),
+			Name:         doc.Entity.Name,
+			CanonicalURL: doc.Entity.CanonicalURL,
+		},
+		Body: doc,
+		Provenance: CrawlProvenance{
+			Origin: r.Origin, Depth: r.Depth, FetchedAt: r.FetchedAt,
+		},
+	}, true
 }
 
 // Crawler walks an AEO declaration graph.
@@ -56,9 +106,9 @@ type Crawler struct {
 	cfg    Config
 	client *aeo.Client
 
-	mu        sync.Mutex
-	visited   map[string]bool
-	results   []Result
+	mu          sync.Mutex
+	visited     map[string]bool
+	results     []Result
 	fetchBudget int
 }
 
@@ -165,6 +215,9 @@ func (c *Crawler) fetchOne(ctx context.Context, origin string, depth int) (Resul
 	r.EntityName = doc.Entity.Name
 	r.EntityType = string(doc.Entity.Type)
 	r.ClaimsCount = len(doc.Claims)
+	if c.cfg.GraphOutput {
+		r.document = doc
+	}
 	if doc.Audit != nil {
 		r.AuditMode = string(doc.Audit.Mode)
 	}

@@ -61,6 +61,78 @@ func TestCrawl_SeedOnly(t *testing.T) {
 	}
 }
 
+func TestGraphExportCarriesDeclarationAndProvenanceOnlyWhenRequested(t *testing.T) {
+	srv := newTestServer(t, map[string]interface{}{
+		"aeo_version": "0.1",
+		"entity": map[string]interface{}{
+			"id": "https://example.com/#org", "type": "Organization",
+			"name": "Example", "canonical_url": "https://example.com/",
+		},
+		"authority": map[string]interface{}{
+			"primary_sources": []string{"https://second.example/statement"},
+		},
+		"claims": []map[string]interface{}{
+			{"id": "c1", "predicate": "industry", "value": "testing"},
+		},
+	})
+	defer srv.Close()
+
+	cfg := Config{MaxDepth: 0, MaxFetches: 1, Concurrency: 1, FetchTimeout: time.Second}
+	summary, err := New(cfg).Crawl(context.Background(), srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := summary[0].AsGraphNode(); ok {
+		t.Fatal("default summary run unexpectedly retained the document")
+	}
+	summaryJSON, err := json.Marshal(summary[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(summaryJSON) == "" || string(summaryJSON) == "null" {
+		t.Fatal("summary JSON is empty")
+	}
+	var summaryFields map[string]interface{}
+	if err := json.Unmarshal(summaryJSON, &summaryFields); err != nil {
+		t.Fatal(err)
+	}
+	if _, hasDocument := summaryFields["body"]; hasDocument {
+		t.Fatal("summary output unexpectedly includes body")
+	}
+
+	cfg.GraphOutput = true
+	results, err := New(cfg).Crawl(context.Background(), srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	node, ok := results[0].AsGraphNode()
+	if !ok {
+		t.Fatal("successful graph run did not produce a graph node")
+	}
+	encoded, err := json.Marshal(node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]interface{}
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if fields["id"] != "https://example.com/#org" {
+		t.Fatalf("unexpected id: %v", fields["id"])
+	}
+	entity := fields["entity"].(map[string]interface{})
+	if entity["kind"] != "Organization" || entity["id"] != fields["id"] {
+		t.Fatalf("unexpected entity: %v", entity)
+	}
+	body := fields["body"].(map[string]interface{})
+	if body["aeo_version"] != "0.1" || len(body["claims"].([]interface{})) != 1 {
+		t.Fatalf("incomplete body: %v", body)
+	}
+	if fields["provenance"].(map[string]interface{})["origin"] != srv.URL {
+		t.Fatalf("unexpected provenance: %v", fields["provenance"])
+	}
+}
+
 func TestCrawl_FollowsPrimarySources(t *testing.T) {
 	// Set up two origins: the seed lists the second one as a primary source.
 	var srv2 *httptest.Server

@@ -27,6 +27,29 @@ Output (one JSON object per line):
 {"origin":"https://mizcausevic.com","depth":1,"success":false,"error":"HTTP 404","fetched_at":"2026-05-12T04:00:01Z"}
 ```
 
+The default `summary` format is unchanged. To send a crawl directly to
+[`aeo-graph-explorer-rs`](https://github.com/mizcausevic-dev/aeo-graph-explorer-rs), request
+the opt-in graph format:
+
+```bash
+aeo-crawler --seed https://example.com --format graph > crawl.graph.jsonl
+```
+
+From this source checkout, use
+`go run ./cmd/aeo-crawler --seed https://example.com --format graph`
+if an older installed CLI does not yet have the flag.
+
+Each successful fetch produces one enriched row containing `id`, an `entity`
+summary, the SDK-parsed AEO declaration in `body`, and `provenance` with the
+fetched origin, depth, and fetch time. Failed fetches are omitted from graph
+JSONL; run the default summary format when you need the full fetch/error ledger.
+Graph export exits with an error instead of writing an empty file when no
+declarations succeed.
+`body` is the parsed v0.1 document, not a byte-for-byte copy of the HTTP
+response. Its claims are supplied by the origin and are not verified by this
+crawler. The graph output can include the declaration's audit metadata and
+claims; review it before sharing or uploading.
+
 ## Flags
 
 | Flag | Default | Description |
@@ -36,6 +59,7 @@ Output (one JSON object per line):
 | `--max-fetches` | `100` | Global cap on total fetches. |
 | `--concurrency` | `4` | Maximum in-flight HTTP requests. |
 | `--timeout` | `10` | Per-request timeout in seconds. |
+| `--format` | `summary` | `summary` keeps the fetch ledger; `graph` emits successful enriched nodes for the explorer. |
 
 ## Useful pipelines
 
